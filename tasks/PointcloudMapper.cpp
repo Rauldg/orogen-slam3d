@@ -307,11 +307,31 @@ bool PointcloudMapper::configureHook()
 	mPclSensor->setRegistrationParameters(_gicp_config, false);
 	mPclSensor->setRegistrationParameters(_gicp_coarse_config, true);
 
+	std::vector<double> loopCov = _loop_covariance_diagonal.get();
+	if(loopCov.size() == 6)
+	{
+		Eigen::Matrix<double,6,1> d = Eigen::Map<const Eigen::Matrix<double,6,1> >(loopCov.data());
+		if((d.array() <= 0).any())
+		{
+			mLogger->message(ERROR, "loop_covariance_diagonal entries must be > 0");
+			return false;
+		}
+		mPclSensor->setLoopCovariance(d.asDiagonal());
+	}
+	else if(!loopCov.empty())
+	{
+		mLogger->message(ERROR, "loop_covariance_diagonal must have 6 entries or be empty");
+		return false;
+	}
+
 	mLogger->message(INFO, " === Mapper - Parameters ===");
 	mLogger->message(INFO, (boost::format("use_odometry:           %1%") % _use_odometry.get()).str());	
 	if(_use_odometry.get())
 	{
 		mOdometry = new RockOdometry("RockOdometry", mGraph, mSolver, mLogger, _robot2odometry, true);
+		mOdometry->setGravityCovarianceScale(_gravity_covariance_scale.get());
+		mOdometry->setOdometryCovariance(_odometry_covariance_diagonal.get(),
+		                                 _odometry_covariance_per_meter.get());
 		_robot2odometry.registerUpdateCallback(boost::bind(&PointcloudMapper::transformerCallback, this, _1));
 		mLogger->message(INFO, (boost::format("add_odometry_edges:     %1%") % _add_odometry_edges).str());
 		if(_add_odometry_edges)

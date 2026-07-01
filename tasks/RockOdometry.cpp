@@ -3,6 +3,7 @@
 
 #include <slam3d/core/Graph.hpp>
 #include <boost/format.hpp>
+#include <stdexcept>
 using namespace slam3d;
 
 RockOdometry::RockOdometry(const std::string& name, Graph* graph, Solver* solver, Logger* logger,
@@ -12,6 +13,29 @@ RockOdometry::RockOdometry(const std::string& name, Graph* graph, Solver* solver
 	mLastVertex = 0;
 	mLastOdometricPose = Transform::Identity();
 	mGravityReference = Direction::UnitZ();
+	mGravityCovarianceScale = 1.0;
+	mUseCovarianceModel = false;
+	mCovDiagonal.setConstant(100.0);
+	mCovPerMeter.setZero();
+}
+
+void RockOdometry::setOdometryCovariance(const std::vector<double>& diagonal,
+                                         const std::vector<double>& perMeter)
+{
+	if(diagonal.size() != 6)
+	{
+		if(!diagonal.empty())
+			throw std::invalid_argument("odometry_covariance_diagonal must have 6 entries or be empty");
+		return;
+	}
+	mCovDiagonal = Eigen::Map<const Eigen::Matrix<double,6,1> >(diagonal.data());
+	if(perMeter.size() == 6)
+		mCovPerMeter = Eigen::Map<const Eigen::Matrix<double,6,1> >(perMeter.data());
+	else if(!perMeter.empty())
+		throw std::invalid_argument("odometry_covariance_per_meter must have 6 entries or be empty");
+	if((mCovDiagonal.array() <= 0).any() || (mCovPerMeter.array() < 0).any())
+		throw std::invalid_argument("odometry covariance diagonal must be > 0 (per-meter >= 0)");
+	mUseCovarianceModel = true;
 }
 
 RockOdometry::~RockOdometry()
@@ -33,8 +57,9 @@ void RockOdometry::handleNewVertex(IdType vertex)
 	
 	// Add a gravity vector to this vertex
 	Eigen::Quaterniond state(currentOdometricPose.rotation());
-	Direction upVector = state.inverse() * Eigen::Vector3d::UnitZ();	
-	GravityConstraint::Ptr grav(new GravityConstraint(mName, upVector, mGravityReference, Covariance<2>::Identity()));
+	Direction upVector = state.inverse() * Eigen::Vector3d::UnitZ();
+	GravityConstraint::Ptr grav(new GravityConstraint(mName, upVector, mGravityReference,
+		Covariance<2>::Identity() * mGravityCovarianceScale));
 	mGraph->addConstraint(vertex, 0, grav);
 	
 	mLastVertex = vertex;
@@ -84,5 +109,10 @@ Transform RockOdometry::getPose(base::Time t)
 
 Covariance<6> RockOdometry::calculateCovariance(const Transform &tf)
 {
-	return Covariance<6>::Identity() * 100;
+	if(!mUseCovarianceModel)
+		return Covariance<6>::Identity() * 100;
+	// Anisotropic model: base diagonal plus a distance-scaled term, ordering
+	// [tx, ty, tz, rx, ry, rz] (matches the g2o EdgeSE3 information layout).
+	Eigen::Matrix<double,6,1> diag = mCovDiagonal + tf.translation().norm() * mCovPerMeter;
+	return diag.asDiagonal();
 }
