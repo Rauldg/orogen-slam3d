@@ -500,13 +500,16 @@ void PointcloudMapper::scanTransformerCallback(const base::Time &ts, const base:
 			mForceAdd = false;
 
 			mPclSensor->linkLastToNeighbors();
-			handleNewScan(mGraph->getVertex(mPclSensor->getLastVertexId()));
-			
+
 			if((int)mGraph->getNumOfNewConstraints() >= _optimization_rate)
 			{
 				optimize();
 			}
-			
+
+			// Merge after optimization, so the keyframe enters the map at its corrected pose.
+			// getVertex returns by value, so this reads the post-optimization pose.
+			handleNewScan(mGraph->getVertex(mPclSensor->getLastVertexId()));
+
 			if(_map_publish_rate > 0 && (mScansAdded % _map_publish_rate) == 0)
 			{
 				generate_map();
