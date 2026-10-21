@@ -10,6 +10,10 @@
 #include <slam3d/core/FileLogger.hpp>
 #include <slam3d/solver/g2o/G2oSolver.hpp>
 
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <cstdlib>
 #include <boost/format.hpp>
 #include <boost/thread.hpp>
 #include <boost/filesystem.hpp>
@@ -390,8 +394,48 @@ void PointcloudMapper::transformerCallback(const base::Time &time)
 }
 
 
+namespace
+{
+	// Wall-clock timer that reports on scope exit, so every return path of the callback is covered.
+	struct ScanTimer
+	{
+		std::chrono::steady_clock::time_point start;
+		std::function<void(double)> report;
+		explicit ScanTimer(std::function<void(double)> r) : start(std::chrono::steady_clock::now()), report(r) {}
+		~ScanTimer()
+		{
+			double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+			report(ms);
+		}
+	};
+}
+
 void PointcloudMapper::scanTransformerCallback(const base::Time &ts, const base::samples::Pointcloud &scan_sample)
 {
+	// SLAM3D_SCAN_TIMING=1: log duration vs. vertex count; =2: also log edge count (copies the edge list, slows down the run).
+	static const char* timing_env = getenv("SLAM3D_SCAN_TIMING");
+	static const int timing_level = timing_env ? atoi(timing_env) : 0;
+	const int scans_before = mScansAdded;
+	bool did_optimize = false;
+	bool did_mapgen = false;
+	std::unique_ptr<ScanTimer> timer;
+	if(timing_level > 0)
+	{
+		timer.reset(new ScanTimer([&](double ms)
+		{
+			if(mScansAdded == scans_before)
+				return; // scan was skipped or rejected
+			std::string edges = "-1";
+			if(timing_level > 1)
+			{
+				try { edges = std::to_string(mGraph->getEdges({mPclSensor->getName()}).size()); }
+				catch(std::exception&) {}
+			}
+			mLogger->message(INFO, (boost::format("SCANTIMING vertices=%1% edges=%2% ms=%3% optimized=%4% mapgen=%5%")
+				% mScansAdded % edges % ms % did_optimize % did_mapgen).str());
+		}));
+	}
+
 	if(ts != scan_sample.time)
 	{
 		mLogger->message(ERROR, "Timestamps of scan and transformer do not match.");
@@ -503,6 +547,7 @@ void PointcloudMapper::scanTransformerCallback(const base::Time &ts, const base:
 
 			if((int)mGraph->getNumOfNewConstraints() >= _optimization_rate)
 			{
+				did_optimize = true;
 				optimize();
 			}
 
@@ -512,6 +557,7 @@ void PointcloudMapper::scanTransformerCallback(const base::Time &ts, const base:
 
 			if(_map_publish_rate > 0 && (mScansAdded % _map_publish_rate) == 0)
 			{
+				did_mapgen = true;
 				generate_map();
 			}
 		}else
