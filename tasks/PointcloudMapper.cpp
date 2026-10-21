@@ -272,10 +272,13 @@ bool PointcloudMapper::configureHook()
 	setLog_level(_log_level);
 
 	// Create all internal objects
-	mSolver = new G2oSolver(mLogger);
+	G2oSolver* solver = new G2oSolver(mLogger);
+	mSolver = solver;
 	mPatchSolver = new G2oSolver(mLogger);
 
 	mPclSensor = new PointCloudSensor("LaserScanner", mLogger);
+	// Robustify only the scan matching edges, not odometry
+	solver->setRobustKernel(_huber_width.get(), {mPclSensor->getName()});
 	mPclSensor->setPatchSolver(mPatchSolver);
 
 	mStorage = new MeasurementStorage;

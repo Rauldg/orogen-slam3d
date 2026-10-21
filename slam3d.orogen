@@ -174,6 +174,13 @@ task_context "PointcloudMapper" do
 	to reduce false positives. The resulting transformation	is then used to
 	initialize the normal ICP used fpr sequential matches.")
 
+	property('huber_width', '/double', 0.0)
+	.doc("Width of a Huber robust kernel on the scan matching (LaserScanner) edges of
+	the pose graph, which limits the influence of wrong scan matches on the optimization.
+	Odometry and gravity edges are not affected. The scan matching edges have an
+	identity information matrix, so the width is the raw error in meters and half-radians.
+	A value of 0 disables the kernel.")
+
 	property('log_type', '/int', 0)
 	.doc("Selects the type of logging that is used by slam3d. Standard(0) simply
 	writes to standard output, Base(1) uses ROCK's base-logging mechanism and
